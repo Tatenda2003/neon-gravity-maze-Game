@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Cyber-Cell: Virus Shooter</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050510;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            box-shadow: 0 0 30px rgba(255, 0, 50, 0.4);
+            border-radius: 4px;
+            width: 800px;
+            height: 600px;
+        }
+
+        .hud {
+            display: flex;
+            justify-content: space-between;
+            width: 800px;
+            margin-bottom: 20px;
+            font-size: 28px;
+            font-weight: bold;
+            text-shadow: 0 0 10px red, 0 0 20px darkred;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .hud-item {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border: 2px solid red;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="hud">
+        <div class="hud-item">Score: <span id="score">0</span></div>
+        <div class="hud-item">Health: <span id="lives">100</span>%</div>
+    </div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let score = 0;
+        let lives = 100;
+        let gameOver = false;
+        let frameCount = 0;
+
+        // Base64 Images (will be injected by build script)
+        const AVATAR_B64 = "AVATAR_B64_PLACEHOLDER";
+        const VIRUS_B64 = "VIRUS_B64_PLACEHOLDER";
+        const BG_B64 = "BG_B64_PLACEHOLDER";
+
+        // Asset loading
+        const assets = { avatar: new Image(), virus: new Image(), bg: new Image() };
+        const processed = { avatar: null, virus: null };
+
+        let assetsLoaded = 0;
+        function checkLoad() {
+            assetsLoaded++;
+            if (assetsLoaded === 3) initGame();
+        }
+
+        assets.bg.onload = checkLoad;
+        assets.bg.src = "data:image/png;base64," + BG_B64;
+
+        function processWhiteBackground(img, callback) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.width; tempCanvas.height = img.height;
+            const tCtx = tempCanvas.getContext('2d');
+            tCtx.drawImage(img, 0, 0);
+            const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const data = imgData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                if (r > 240 && g > 240 && b > 240) {
+                    data[i + 3] = 0; // Transparent
+                } else if (r > 200 && g > 200 && b > 200) {
+                    data[i + 3] = Math.max(0, 255 - ((r - 200) * 4));
+                }
+            }
+            tCtx.putImageData(imgData, 0, 0);
+            const pImg = new Image();
+            pImg.onload = callback;
+            pImg.src = tempCanvas.toDataURL();
+            return pImg;
+        }
+
+        assets.avatar.onload = () => { processed.avatar = processWhiteBackground(assets.avatar, checkLoad); };
+        assets.virus.onload = () => { processed.virus = processWhiteBackground(assets.virus, checkLoad); };
+
+        assets.avatar.src = "data:image/png;base64," + AVATAR_B64;
+        assets.virus.src = "data:image/png;base64," + VIRUS_B64;
+
+        // Entities
+        const player = {
+            x: 400 - 30,
+            y: 600 - 80,
+            width: 60,
+            height: 80,
+            speed: 7,
+            cooldown: 0
+        };
+
+        const keys = { w: false, a: false, s: false, d: false, ArrowLeft: false, ArrowRight: false, ' ': false };
+
+        window.addEventListener('keydown', e => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
+        window.addEventListener('keyup', e => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+
+        const enemies = [];
+        const bullets = [];
+
+        function spawnEnemy() {
+            const size = 50 + Math.random() * 40; // 50 to 90
+            enemies.push({
+                x: Math.random() * (800 - size),
+                y: -100,
+                width: size,
+                height: size,
+                speed: 1.5 + Math.random() * 2,
+                hp: Math.floor(size / 30), // bigger viruses have more HP
+                randomOffset: Math.random() * Math.PI * 2
+            });
+        }
+
+        function initGame() {
+            setTimeout(spawnEnemy, 1000);
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop() {
+            if (gameOver) return;
+            frameCount++;
+
+            // Player Movement
+            if (keys.a || keys.ArrowLeft) player.x -= player.speed;
+            if (keys.d || keys.ArrowRight) player.x += player.speed;
+
+            // Player Constraints
+            if (player.x < 0) player.x = 0;
+            if (player.x > 800 - player.width) player.x = 800 - player.width;
+
+            // Shooting
+            if (player.cooldown > 0) player.cooldown--;
+            if (keys[' '] && player.cooldown === 0) {
+                bullets.push({
+                    x: player.x + player.width / 2 - 5,
+                    y: player.y,
+                    width: 10,
+                    height: 20,
+                    speed: 15
+                });
+                player.cooldown = 12; // Fire rate limit
+            }
+
+            // Move Bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.y -= b.speed;
+                if (b.y < -50) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // Spawn Enemies
+            if (Math.random() < 0.02 + (score * 0.0001)) { // Gradually harder
+                spawnEnemy();
+            }
+
+            // Move and Check Enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.y += e.speed;
+
+                // If virus hits the bottom, player takes damage
+                if (e.y > 600) {
+                    lives -= Math.floor(e.width / 5); // Damage based on size
+                    document.getElementById('lives').innerText = lives;
+                    enemies.splice(i, 1);
+                    canvas.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                    setTimeout(() => canvas.style.backgroundColor = 'transparent', 150);
+                    if (lives <= 0) {
+                        gameOver = true;
+                        alert("GAME OVER! Infection took over. Final Score: " + score);
+                        window.location.reload();
+                    }
+                    continue;
+                }
+
+                // Bullet Collision
+                let enemyDied = false;
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    let b = bullets[j];
+                    if (b.x < e.x + e.width && b.x + b.width > e.x &&
+                        b.y < e.y + e.height && b.y + b.height > e.y) {
+
+                        e.hp--;
+                        bullets.splice(j, 1); // destroy bullet
+
+                        if (e.hp <= 0) {
+                            score += Math.floor(e.width / 10) * 10;
+                            document.getElementById('score').innerText = score;
+                            enemies.splice(i, 1);
+                            enemyDied = true;
+                            break; // Stop checking this enemy
+                        }
+                    }
+                }
+
+                if (enemyDied) continue;
+
+                // Player Collision
+                const hitMargin = 15;
+                if (player.x + hitMargin < e.x + e.width - hitMargin &&
+                    player.x + player.width - hitMargin > e.x + hitMargin &&
+                    player.y + hitMargin < e.y + e.height - hitMargin &&
+                    player.y + player.height - hitMargin > e.y + hitMargin) {
+
+                    lives -= 25;
+                    document.getElementById('lives').innerText = lives;
+                    enemies.splice(i, 1);
+
+                    canvas.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
+                    setTimeout(() => canvas.style.backgroundColor = 'transparent', 150);
+
+                    if (lives <= 0) {
+                        gameOver = true;
+                        alert("GAME OVER! You were infected! Final Score: " + score);
+                        window.location.reload();
+                    }
+                }
+            }
+
+            // --- DRAWING ---
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Background
+            ctx.drawImage(assets.bg, 0, 0, 800, 600);
+
+            // Draw animated viruses
+            enemies.forEach(e => {
+                ctx.save();
+                ctx.translate(e.x + e.width / 2, e.y + e.height / 2);
+
+                // Animate rotation to make them spin like restless cells
+                ctx.rotate(frameCount * 0.05 + e.randomOffset);
+
+                // Animate throbbing pulsing effect like they are alive
+                const scale = 1 + 0.12 * Math.sin(frameCount * 0.15 + e.randomOffset);
+                ctx.scale(scale, scale);
+
+                const vImg = processed.virus || assets.virus;
+                ctx.drawImage(vImg, -e.width / 2, -e.height / 2, e.width, e.height);
+                ctx.restore();
+            });
+
+            // Draw bullets
+            ctx.fillStyle = '#00FFFF';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00FFFF';
+            bullets.forEach(b => {
+                ctx.beginPath();
+                ctx.arc(b.x + b.width / 2, b.y + b.height / 2, b.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.shadowBlur = 0; // reset
+
+            // Draw player
+            const pImg = processed.avatar || assets.avatar;
+            ctx.drawImage(pImg, player.x, player.y, player.width, player.height);
+
+            requestAnimationFrame(gameLoop);
+        }
+    </script>
+</body>
+
+</html>
